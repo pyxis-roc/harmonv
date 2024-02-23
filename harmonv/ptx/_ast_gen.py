@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2019,2021 University of Rochester
+#
+# SPDX-License-Identifier: MIT
+
 #-----------------------------------------------------------------
 # _ast_gen.py
 #

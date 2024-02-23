@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2019,2021 University of Rochester
+#
+# SPDX-License-Identifier: MIT
+
 #-----------------------------------------------------------------
 # ** ATTENTION **
 # This code was automatically generated from the file:

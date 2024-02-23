@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2019,2021 University of Rochester
+#
+# SPDX-License-Identifier: MIT
+
 all: PtxParser.py ptx_ast.py
 
 ptx_ast.py: _ptx_ast.cfg _build_ast.py _ast_gen.py

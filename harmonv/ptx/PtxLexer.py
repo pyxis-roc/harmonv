@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2019,2021 University of Rochester
+#
+# SPDX-License-Identifier: MIT
+
 # Generated from Ptx.g4 by ANTLR 4.7.2
 from antlr4 import *
 from io import StringIO
