@@ -29,5 +29,6 @@ setup(name='harmonv',
       package_data={'harmonv': ['ptx/*.cfg', 'ptx/*.interp', 'ptx/*.tokens']},
       scripts=['bin/hcuobjdump',
                'bin/gen_xlat_metadata.py',
-               'bin/fbextractor.py']
+               'bin/fbextractor.py'],
+      install_requires = ['pyelftools', 'lz4']
 )
