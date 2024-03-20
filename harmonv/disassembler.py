@@ -226,6 +226,8 @@ class SASSFunction(object):
 
         if self.branch_targets is not None:
             out['branch_targets'] = self.branch_targets
+        else:
+            out['branch_targets'] = {}
 
         return out
 
