@@ -4,3 +4,4 @@
 
 pyelftools
 lz4
+PyYAML
