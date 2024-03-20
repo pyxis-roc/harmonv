@@ -30,5 +30,5 @@ setup(name='harmonv',
       scripts=['bin/hcuobjdump',
                'bin/gen_xlat_metadata.py',
                'bin/fbextractor.py'],
-      install_requires = ['pyelftools', 'lz4']
+      install_requires = ['pyelftools', 'lz4', 'PyYAML']
 )
