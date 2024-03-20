@@ -11,7 +11,7 @@
 #
 # Copyright (C) 2020, 2024 University of Rochester
 #
-# SPDX-FileCopyrightText: 2020-2023 University of Rochester
+# SPDX-FileCopyrightText: 2020-2024 University of Rochester
 #
 # SPDX-License-Identifier: MIT
 
@@ -60,7 +60,11 @@ NVDISASM_RE_FUNC_ENTRY = re.compile(r'''
                                     re.VERBOSE)
 
 NVDISASM_BRANCH_LBL = re.compile(r'\.L_\d+')
-
+# CAL header goes like:
+#        .weak           identifier
+#        .type           identifier,@function
+#        .size           identifier,(.L_### - identifier)
+NVDISASM_CAL_HEADER_BEGIN = re.compile(r"\s+\.weak\s+(?P<cal_name>.+)$")
 NVDISASM_SASS_FMT = re.compile(r'''
                                ( (?# Instruction text group)
                                     \s+/\*(?P<loc>[0-9A-Fa-f]+)\*/ (?# address, e.g. 0008 for the first instruction) \s+
@@ -322,6 +326,7 @@ class DisassemblerCUObjdump(object):
         branch_label_dict = {}
         branch_targets = defaultdict(dict)
         first_instr_found = False
+        awaiting_cal_name = None
 
         for lno, l in enumerate(nvds_output.splitlines(), 1):
             if status == 'Start' and l == f'{active_fn}:':
@@ -334,7 +339,9 @@ class DisassemblerCUObjdump(object):
                     continue
                 active_fn = m.group('function')
                 status = 'Start'
-            elif status == 'End' and l == '':
+            
+            elif status == 'End' and l == '' and last_line_label is not None:
+                    # Function end is always a label followed by an empty line
                 for insn in filter(lambda x: x.loc in branch_label_dict, fn_output[active_fn][1]): 
                     assert insn.opcode == branch_label_dict[insn.loc].opcode, f"{lno}: Branch label {insn.loc} does not match opcode {insn.opcode}"
                     branch_targets[active_fn][insn.loc] = branch_label_dict[insn.loc].target_label
@@ -345,15 +352,22 @@ class DisassemblerCUObjdump(object):
             elif status == 'End' and NVDISASM_BRANCH_LBL.match(l):
                 last_line_label = l
                 continue
+            elif status == 'End' and (cal_match := NVDISASM_CAL_HEADER_BEGIN.match(l)) is not None:
+                awaiting_cal_name = cal_match.group('cal_name')
+                status = 'CalEntry'
+            elif status == 'CalEntry':
+                if l == f'{awaiting_cal_name}:':
+                    awaiting_cal_name = None
+                    status = 'End'
+                else:
+                    assert awaiting_cal_name in l, f"{lno}: Line '{l}' in middle of disassembly does not match regex."
             elif status == 'End':
                 m = NVDISASM_SASS_FMT.match(l)
                 if first_instr_found:
-                    assert m is not None, f"{lno}: Line '{l}' in middle of nvdisasm output does not match SASS disassembly regular expression"
+                    assert m is not None, f"{lno}: Line in middle of disassembly does not match regex.\n\t{l}"
                 else:
                     first_instr_found = m is not None and m.group('loc') is not None
                 if m is not None:
-                    if first_instr_found:
-                        pass
                     if last_line_label is not None:
                         branch_targets[last_line_label] = m.group('loc')
                     if m.group('branch_target') is not None:
