@@ -7,8 +7,9 @@
 # Uses cuobjdump and/or nvdisasm (which must be in path).
 #
 # Author: Sreepathi Pai
+# Author: Benjamin Valpey
 #
-# Copyright (C) 2020, University of Rochester
+# Copyright (C) 2020, 2024 University of Rochester
 #
 # SPDX-FileCopyrightText: 2020-2023 University of Rochester
 #
@@ -24,7 +25,7 @@ import os
 import logging
 import subprocess
 import re
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from harmonv import disasm_parser
 
 logger = logging.getLogger(__name__)
@@ -39,10 +40,42 @@ CUOBJDUMP_RE_FUNC_END = re.compile(r'\s+\.+$')
 #         /*00b0*/                   STG.E [R2], R0;        }    /* 0xeedc200000070200 */
 
 
-CUOBJDUMP_SASS_FMT = re.compile(r'(\s+/\*(?P<loc>[0-9A-Fa-f]+)\*/\s+(?P<startbrace>{)?\s+(?P<text>.*);\s*(?P<endbrace>})?)?\s+/\*\s+(?P<opcode>0x[0-9A-Fa-f]+)\s+\*/$')
+CUOBJDUMP_SASS_FMT = re.compile(r'''( (?# Instruction text group)
+                                \s+/\*(?P<loc>[0-9A-Fa-f]+)\*/ (?# address, e.g. 0008 for the first instruction) \s+
+                                (?P<startbrace>{)? (?# VLIW Start) \s+
+                                (?P<text>.*); (?# The instruction line)
+                                \s*(?P<endbrace>})? (?# VLIW End)
+                                )? (?# End instruction text group) \s+/\*\s+
+                                (?P<opcode>0x[0-9A-Fa-f]+) (?# Opcode in hexadecimal) \s+\*/$
+                                ''',
+                                re.VERBOSE)
 
+BRANCH_LABEL_INFO = namedtuple('BRANCH_LABEL_INFO', 'target_label opcode')
 SASS_INSN_CUOBJDUMP = namedtuple('SASS_INSN_CUOBJDUMP', 'loc opcode text raw vliw_start vliw_end')
 SASS_DIRECTIVE = re.compile(r'\s*\..*$')
+
+NVDISASM_RE_FUNC_ENTRY = re.compile(r'''
+                                    \s+\.type\s+(?P<function>.*),@function$
+                                    ''',
+                                    re.VERBOSE)
+
+NVDISASM_BRANCH_LBL = re.compile(r'\.L_\d+')
+
+NVDISASM_SASS_FMT = re.compile(r'''
+                               ( (?# Instruction text group)
+                                    \s+/\*(?P<loc>[0-9A-Fa-f]+)\*/ (?# address, e.g. 0008 for the first instruction) \s+
+                                    (?P<text>.*?) (?# The instruction line)
+                                        (   (?# Capture group for branch labels, e.g. (*"BRANCH_TARGETS .L_1"*) 
+                                            (?# CUDA < 11.0 has form "TARGET= .L_\d+" and cuda >= 11.0 has form "BRANCH_TARGETS .L_\d+")
+                                            \(\*"(BRANCH_TARGETS|TARGET=)\s+ 
+                                            (?P<branch_target>\.L_\d+) (?# The actual branch label matches .L_\d+)
+                                            \s*"\*\)\s*
+                                        )?
+                                    ;  (?# Always have ';' with -novliw flag)
+                                )? (?# End instruction text group) \s+/\*\s+
+                                (?P<opcode>0x[0-9A-Fa-f]+) (?# Hexadecimal opcode) \s+\*/$
+                                ''',
+                                re.VERBOSE)
 
 class SASSFunction(object):
     def __init__(self, function, sass_disassembly, producer, headers = None, sass_binary = None):
@@ -68,6 +101,7 @@ class SASSFunction(object):
         self.frame_size = None
         self.max_stack_size = None
         self.min_stack_size = None
+        self.branch_targets = None
 
     def __str__(self):
         return f"SASSFunction(function={repr(self.function)})"
@@ -128,6 +162,9 @@ class SASSFunction(object):
     def set_global_offsets(self, goffsets):
         self.global_offsets = goffsets
 
+    def set_branch_targets(self, branch_targets):
+        self.branch_targets = branch_targets
+
     def to_dict(self):
         out = {'function': self.function,
                'producer': self.producer,
@@ -183,14 +220,16 @@ class SASSFunction(object):
         if self.global_offsets is not None:
             out['global_offsets'] = self.global_offsets
 
+        if self.branch_targets is not None:
+            out['branch_targets'] = self.branch_targets
+
         return out
 
 
 class DisassemblerCUObjdump(object):
     @staticmethod
     def _parse_cuobjdump_output(src, output):
-        """Get per-function SASS dumps"""
-
+        """Get per-function SASS dumps."""
         out = {}
         fn = None
         fn_name = None
@@ -238,7 +277,6 @@ class DisassemblerCUObjdump(object):
                                                vliw_start=m.group('startbrace') is not None,
                                                vliw_end=m.group('endbrace') is not None,
                                                raw=l)
-                    #print(l, insn)
                     disasm.append(insn)
 
             out[fn] = (header, disasm)
@@ -272,9 +310,62 @@ class DisassemblerCUObjdump(object):
             out[fn] = (header, disasm)
 
         return out
+    
+    @staticmethod
+    def _get_nvdisasm_bra_targets(src, nvds_output, fn_output):
+        # Get mangled names of functions to isolate
+        fns = set(fn_output.keys())
+
+        status = 'Entry'
+        active_fn = None
+
+        branch_label_dict = {}
+        branch_targets = defaultdict(dict)
+        first_instr_found = False
+
+        for lno, l in enumerate(nvds_output.splitlines(), 1):
+            if status == 'Start' and l == f'{active_fn}:':
+                status = 'End'
+                continue
+            elif status == 'Entry':
+                m = NVDISASM_RE_FUNC_ENTRY.match(l)
+                if m is None or m.group('function') not in fns:
+                    last_line_label = None
+                    continue
+                active_fn = m.group('function')
+                status = 'Start'
+            elif status == 'End' and l == '':
+                for insn in filter(lambda x: x.loc in branch_label_dict, fn_output[active_fn][1]): 
+                    assert insn.opcode == branch_label_dict[insn.loc].opcode, f"{lno}: Branch label {insn.loc} does not match opcode {insn.opcode}"
+                    branch_targets[active_fn][insn.loc] = branch_label_dict[insn.loc].target_label
+                active_fn = None
+                status = 'Entry'
+                first_instr_found = False
+            elif status == 'End' and NVDISASM_BRANCH_LBL.match(l):
+                last_line_label = l
+                continue
+            elif status == 'End':
+                m = NVDISASM_SASS_FMT.match(l)
+                if first_instr_found:
+                    assert m is not None, f"{lno}: Line '{l}' in middle of nvdisasm output does not match SASS disassembly regular expression"
+                else:
+                    first_instr_found = m is not None and m.group('loc') is not None
+                if m is not None:
+                    if first_instr_found:
+                        pass
+                    if last_line_label is not None:
+                        branch_targets[last_line_label] = m.group('loc')
+                    if m.group('branch_target') is not None:
+                        branch_label_dict[m.group('loc')] = BRANCH_LABEL_INFO(m.group('branch_target'), m.group('opcode'))
+                
+
+            last_line_label = None
+
+        return branch_targets
 
     @staticmethod
-    def disassemble(cubin, function_names = [], function_index = None, _keep = False, src = '<unknown>'):
+    def disassemble(cubin, function_names = None, function_index = None, _keep = False, src = '<unknown>', add_branch_targets=False):
+        function_names = [] if function_names is None else function_names
         cubin_data = cubin.get_data()
         fnargs = cubin.get_args()
         fninfo = cubin.get_fn_info()
@@ -286,25 +377,28 @@ class DisassemblerCUObjdump(object):
         assert not (len(function_names) and (function_index is not None)), f"Can't specify both function_names and function_index at the same time"
 
         args = []
-        if len(function_names):
+        nvds_args = []
+        if function_names is not None and len(function_names):
             args.append('-fun')
             args.append(",".join(function_names))
         elif function_index is not None:
-            args.append('-findex')
-            args.append(str(function_index))
-
+            nvds_args.append('-findex')
+            nvds_args.append(str(function_index))
+            args.extend(nvds_args)
         out = {}
         with tempfile.NamedTemporaryFile(suffix=".cubin", delete=False) as f:
             f.write(cubin_data)
             tmpcubin = f.name
-
         try:
-            output = subprocess.check_output(['cuobjdump'] + args + ['-sass', tmpcubin])
-            output = output.decode('ascii')
+            output = subprocess.check_output(['cuobjdump'] + args + ['-sass', tmpcubin]).decode('ascii')
             by_function = DisassemblerCUObjdump._parse_cuobjdump_output(src, output)
             fn_headers_sass = DisassemblerCUObjdump._parse_fn_sass_2(src, by_function)
+            if add_branch_targets:
+                nvds_output = subprocess.check_output(['nvdisasm'] + nvds_args + ['-c', '-hex', '-novliw', tmpcubin]).decode('ascii')
+                fn_branch_dests = DisassemblerCUObjdump._get_nvdisasm_bra_targets(src, nvds_output, fn_headers_sass)
             for fn, (hdr, sass) in fn_headers_sass.items():
                 out[fn] = SASSFunction(fn, sass_disassembly=sass, producer='cuobjdump', headers=hdr)
+                if add_branch_targets and fn in fn_branch_dests: out[fn].set_branch_targets(fn_branch_dests[fn])
                 if fn in fnargs: out[fn].set_arg_info(fnargs[fn])
                 if fn in fninfo: out[fn].set_fn_info(fninfo[fn])
                 if fn in const: out[fn].set_constants(const[fn])

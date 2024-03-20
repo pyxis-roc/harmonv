@@ -43,12 +43,12 @@ def extract_elf(fatbin):
 
     return elf_data
 
-def get_function_info(fatbin, ptx_missing_okay = False):
+def get_function_info(fatbin, ptx_missing_okay = False, add_branch_targets = False):
     def _gfi(ocubin):
         function_info = []
 
         for elfcubin, rawelf in elf_data:
-            disfns = DisassemblerCUObjdump.disassemble(elfcubin, src = fatbin.elf)
+            disfns = DisassemblerCUObjdump.disassemble(elfcubin, src = fatbin.elf, add_branch_targets=add_branch_targets)
 
             for fn, sassfn in disfns.items():
                 function_info.append(sassfn)
@@ -146,6 +146,7 @@ if __name__ == "__main__":
     p.add_argument("--no-demangle", dest="demangle", action="store_false", help="Do not demangle function names, which uses c++filt")
     p.add_argument("--no-relocs", dest="relocs", action="store_false", help="Do not extract functions referenced in relocations even if they do not match --only")
     p.add_argument("--ptx-missing-okay", action="store_true", help="Extract ELF/SASS data even if PTX is missing.")
+    p.add_argument("--with-branch-targets", action="store_true", help="Use nvdisasm to extract branch targets.")
     p.add_argument("-r", dest="ptx_missing_okay", action="store_true", help="Executable was compiled using -rdc, extract ELF/SASS data from executable ELF (which usually contains no PTX).")
 
 
@@ -157,7 +158,7 @@ if __name__ == "__main__":
 
     fatbin = nvfatbin.NVFatBinary(args.elffile, decompressor=DefaultDecompressor)
     fatbin.parse_fatbin()
-    function_info = get_function_info(fatbin, args.ptx_missing_okay)
+    function_info = get_function_info(fatbin, args.ptx_missing_okay, args.with_branch_targets)
 
     only_re = re.compile("|".join(args.only_re))
     except_re = re.compile("|".join(args.except_re))
