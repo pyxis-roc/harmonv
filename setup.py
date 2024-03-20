@@ -23,7 +23,7 @@ class CustomDevelop(develop):
         develop.run(self)
 
 setup(name='harmonv',
-      version='0.1',
+      version='0.2',
       packages=['harmonv'],
       cmdclass={'install': CustomInstall, 'develop': CustomDevelop},
       package_data={'harmonv': ['ptx/*.cfg', 'ptx/*.interp', 'ptx/*.tokens']},
