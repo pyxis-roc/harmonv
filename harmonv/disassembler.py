@@ -326,6 +326,7 @@ class DisassemblerCUObjdump(object):
         active_fn = None
 
         branch_label_dict = {}
+        label_targets = {}
         branch_targets = defaultdict(dict)
         first_instr_found = False
         awaiting_cal_name = None
@@ -346,23 +347,27 @@ class DisassemblerCUObjdump(object):
                     # Function end is always a label followed by an empty line
                 for insn in filter(lambda x: x.loc in branch_label_dict, fn_output[active_fn][1]): 
                     assert insn.opcode == branch_label_dict[insn.loc].opcode, f"{lno}: Branch label {insn.loc} does not match opcode {insn.opcode}"
-                    branch_targets[active_fn][insn.loc] = branch_label_dict[insn.loc].target_label
+                    branch_targets[active_fn][insn.loc] = label_targets.get(branch_label_dict[insn.loc].target_label)
                 active_fn = None
                 status = 'Entry'
                 first_instr_found = False
                 branch_label_dict = {}
+                label_targets = {}
+                last_line_label = None
             elif status == 'End' and NVDISASM_BRANCH_LBL.match(l):
                 last_line_label = l
                 continue
             elif status == 'End' and (cal_match := NVDISASM_CAL_HEADER_BEGIN.match(l)) is not None:
                 awaiting_cal_name = cal_match.group('cal_name')
                 status = 'CalEntry'
+                last_line_label = None
             elif status == 'CalEntry':
                 if l == f'{awaiting_cal_name}:':
                     awaiting_cal_name = None
                     status = 'End'
                 else:
                     assert awaiting_cal_name in l, f"{lno}: Line '{l}' in middle of disassembly does not match regex."
+                last_line_label = None
             elif status == 'End':
                 m = NVDISASM_SASS_FMT.match(l)
                 if first_instr_found:
@@ -370,13 +375,13 @@ class DisassemblerCUObjdump(object):
                 else:
                     first_instr_found = m is not None and m.group('loc') is not None
                 if m is not None:
-                    if last_line_label is not None:
-                        branch_targets[last_line_label] = m.group('loc')
+                    if last_line_label is not None and m.group('loc') is not None:
+                        label_targets[last_line_label] = m.group('loc')
+                        last_line_label = None
+                    elif last_line_label is not None:
+                        logger.warning(f"Line '{l}' labeled by {last_line_label} has no pc. Label will point to the following line")
                     if m.group('branch_target') is not None:
                         branch_label_dict[m.group('loc')] = BRANCH_LABEL_INFO(m.group('branch_target'), m.group('opcode'))
-                
-
-            last_line_label = None
 
         return branch_targets
 
