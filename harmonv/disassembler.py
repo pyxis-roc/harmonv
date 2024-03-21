@@ -379,7 +379,7 @@ class DisassemblerCUObjdump(object):
                         label_targets[last_line_label] = m.group('loc')
                         last_line_label = None
                     elif last_line_label is not None:
-                        logger.warning(f"Line '{l}' labeled by {last_line_label} has no pc. Label will point to the following line")
+                        logger.info(f"Line '{l}' labeled by {last_line_label} has no pc. Label will point to the following line")
                     if m.group('branch_target') is not None:
                         branch_label_dict[m.group('loc')] = BRANCH_LABEL_INFO(m.group('branch_target'), m.group('opcode'))
 
