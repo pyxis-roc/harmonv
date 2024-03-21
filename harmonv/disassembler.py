@@ -59,7 +59,7 @@ NVDISASM_RE_FUNC_ENTRY = re.compile(r'''
                                     ''',
                                     re.VERBOSE)
 
-NVDISASM_BRANCH_LBL = re.compile(r'\.L_\d+')
+NVDISASM_BRANCH_LBL = re.compile(r'\.L_\d+(?=:$)')
 # CAL header goes like:
 #        .weak           identifier
 #        .type           identifier,@function
@@ -354,8 +354,8 @@ class DisassemblerCUObjdump(object):
                 branch_label_dict = {}
                 label_targets = {}
                 last_line_label = None
-            elif status == 'End' and NVDISASM_BRANCH_LBL.match(l):
-                last_line_label = l
+            elif status == 'End' and (lbl_match := NVDISASM_BRANCH_LBL.match(l)):
+                last_line_label = lbl_match.group(0)
                 continue
             elif status == 'End' and (cal_match := NVDISASM_CAL_HEADER_BEGIN.match(l)) is not None:
                 awaiting_cal_name = cal_match.group('cal_name')
