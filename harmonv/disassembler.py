@@ -59,7 +59,7 @@ NVDISASM_RE_FUNC_ENTRY = re.compile(r'''
                                     ''',
                                     re.VERBOSE)
 
-NVDISASM_BRANCH_LBL = re.compile(r'\.L_\d+(?=:$)')
+NVDISASM_BRANCH_LBL = re.compile(r'\.L_(x_)?\d+(?=:$)')
 # CAL header goes like:
 #        .weak           identifier
 #        .type           identifier,@function
@@ -72,7 +72,7 @@ NVDISASM_SASS_FMT = re.compile(r'''
                                         (   (?# Capture group for branch labels, e.g. (*"BRANCH_TARGETS .L_1"*) 
                                             (?# CUDA < 11.0 has form "TARGET= .L_\d+" and cuda >= 11.0 has form "BRANCH_TARGETS .L_\d+")
                                             \(\*"(BRANCH_TARGETS|TARGET=)\s+ 
-                                            (?P<branch_target>\.L_\d+) (?# The actual branch label matches .L_\d+)
+                                            (?P<branch_target>\.L_(x_)?\d+) (?# The actual branch label matches .L_x?_?\d+)
                                             \s*"\*\)\s*
                                         )?
                                     ;  (?# Always have ';' with -novliw flag)
