@@ -330,6 +330,7 @@ class DisassemblerCUObjdump(object):
         branch_targets = defaultdict(dict)
         first_instr_found = False
         awaiting_cal_name = None
+        nvds_output += '\n' # Ensure last line is empty
 
         for lno, l in enumerate(nvds_output.splitlines(), 1):
             if status == 'Start' and l == f'{active_fn}:':
