@@ -138,6 +138,10 @@ class NVCubinPart(object):
         return f
 
     def parse_header(self):
+        self.compressed = False
+        self.identifier = None
+        self.arch = None # TODO: this can be obtained from ELF as well?
+
         if self.header:
             # print([hex(a) for a in self.header])
             self.arch = struct.unpack_from("H", self.header, 0x1C)[0]
@@ -179,8 +183,6 @@ class NVCubinPart(object):
                 self.identifier = self.raw_identifier[
                     : (self.raw_identifier.find(b"\0"))
                 ]
-            else:
-                self.identifier = None
 
             if self.type == CUBIN_PTX and len(self.header) > 0x40:
                 ptxasOptionsOffset = struct.unpack_from("H", self.header, 0x40)[0]
@@ -337,16 +339,26 @@ class NVCubinPartELF(NVCubinPart):
         # print(s.name)
         while ndx < section_size:
             attr_fmt = struct.unpack_from("H", data, ndx)[0]
-            attr_size = struct.unpack_from("H", data, ndx + 2)[0]
-            # print(f"{attr_fmt:x} {attr_size}")
-            ndx += 4
+            ndx += 2
 
-            # possibly use construct?
+            has_payload = attr_fmt & 0x4 # indicates a short word follows with size
+
+            # not always size, sometimes just contents, see the attributes below that 'pass'
+            if has_payload:
+                attr_size = struct.unpack_from("H", data, ndx)[0]
+                ndx += 2
+            else:
+                attr_size = 2
 
             out.append(ATTR_INFO(attr_fmt, attr_size, data[ndx : ndx + attr_size]))
 
-            # TODO: refactor this using nvinfo
+            if not has_payload:
+                ndx += attr_size
 
+            #print(f"{attr_fmt:x} {attr_size}")
+
+            # TODO: refactor this using nvinfo
+            old_ndx = ndx # temporary until we shake out all the bugs using has_payload
             if attr_fmt == 0x1704:  # EIATTR_KPARAM_INFO, EIFMT_SVAL
                 ndx += attr_size
             elif attr_fmt == 0xA04:  # EIATTR_PARAM_CBANK, EIFMT_SVAL
@@ -356,6 +368,10 @@ class NVCubinPartELF(NVCubinPart):
             elif attr_fmt == 0x204:  # EIATTR_IMAGE_SLOT, EIFMT_SVAL
                 ndx += attr_size
             elif attr_fmt == 0x1903:  # EIATTR_CBANK_PARAM_SIZE, EIFMT_HVAL
+                pass
+            elif attr_fmt == EIATTR_VRC_CTA_INIT_COUNT:
+                pass
+            elif attr_fmt == EIATTR_NUM_MBARRIERS:
                 pass
             elif attr_fmt == 0x2304:  # EIATTR_MAX_STACK_SIZE
                 ndx += attr_size
@@ -407,11 +423,40 @@ class NVCubinPartELF(NVCubinPart):
                 ndx += attr_size
             elif attr_fmt == EIATTR_EXPLICIT_CACHING:
                 ndx += attr_size
+            elif attr_fmt == EIATTR_SPARSE_MMA_MASK:
+                pass
+            elif attr_fmt == EIATTR_MERCURY_ISA_VERSION:
+                pass
+            elif attr_fmt == EIATTR_NUM_BARRIERS:
+                pass
+            elif attr_fmt == EIATTR_MBARRIER_INSTR_OFFSETS:
+                ndx += attr_size
+            elif attr_fmt == EIATTR_REQNTID:
+                ndx += attr_size
+            elif attr_fmt == EIATTR_REG_RECONFIG:
+                pass
+            elif attr_fmt == EIATTR_COOP_GROUP_MASK_REGIDS:
+                ndx += attr_size
+            elif attr_fmt == EIATTR_RESERVED_SMEM_USED:
+                pass
+            elif attr_fmt == EIATTR_AT_ENTRY_FRAGMENTS:
+                ndx += attr_size
+            elif attr_fmt in (EIATTR_TCGEN05_1CTA_USED, EIATTR_TCGEN05_2CTA_USED):
+                pass
+            elif attr_fmt in (EIATTR_INSTR_REG_MAP, EIATTR_UNUSED_LOAD_BYTE_OFFSET, EIATTR_ANNOTATIONS):
+                ndx += attr_size
             else:
                 warnings.warn(
                     f"{self.get_filename()}: Unrecognized param info attribute  {attr_fmt:x} {attr_size}"
                 )
-                ndx += attr_size
+                if has_payload:
+                    ndx += attr_size
+
+            # temp code
+            if has_payload:
+                assert ndx - old_ndx == attr_size
+            else:
+                assert ndx - old_ndx == 0, hex(attr_fmt)
 
         return out
 
@@ -474,6 +519,12 @@ class NVCubinPartELF(NVCubinPart):
                 self._set_info_dict(nfo.data, self.max_stack_size)
             elif nfo.attr_fmt == EIATTR_MIN_STACK_SIZE:
                 self._set_info_dict(nfo.data, self.min_stack_size)
+            elif nfo.attr_fmt == EIATTR_INDIRECT_BRANCH_TARGETS:
+                brx_off, zero, zero, count = struct.unpack_from("IHHI", nfo.data, 0)
+                addr = [struct.unpack_from("I", nfo.data, 4+2+2+4+i*4)[0] for i in range(count)]
+                if 'EIATTR_INDIRECT_BRANCH_TARGETS' not in out:
+                    out['EIATTR_INDIRECT_BRANCH_TARGETS'] = {}
+                out['EIATTR_INDIRECT_BRANCH_TARGETS'][f'{brx_off:04x}'] = [f'{a:04x}' for a in addr]
 
         return out
 
@@ -684,6 +735,18 @@ class NVCubin(object):
         self.filename = filename
         self.index = index
 
+    @staticmethod
+    def from_elf(elffilename):
+        """From a .cubin file"""
+        with open(elffilename, 'rb') as f:
+            data = f.read()
+            x = NVCubin(None, None, elffilename)
+            x.parts = []
+            x.parts.append(NVCubinPartELF(CUBIN_ELF, None, data, x))
+            x.parts[-1].parse_header()
+
+        return x
+
     def parse_cubin(self):
         cubin_part_header = struct.Struct("IIQ")
         assert cubin_part_header.size == 16, len(cubin_part_header.size)
@@ -710,7 +773,7 @@ class NVCubin(object):
             elif part_type == CUBIN_ELF:
                 self.parts.append(NVCubinPartELF(part_type, header, part_data, self))
             else:
-                assert False, f"Unknown part_type: {part_type}"
+                assert False, "Unknown part_type in CUBIN: {part_type}"
 
             self.parts[-1].parse_header()
             self.parts[-1].parse()
