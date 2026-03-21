@@ -501,7 +501,8 @@ class NVCubinPartELF(NVCubinPart):
         # function at index X has data X
         for nfo in info:
             if nfo.attr_fmt == EIATTR_CBANK_PARAM_SIZE:
-                out["EIATTR_CBANK_PARAM_SIZE"] = nfo.attr_size
+                out["EIATTR_CBANK_PARAM_SIZE"] = struct.unpack_from('H', nfo.data, 0)[0]
+                #nfo.attr_size
                 # struct.unpack_from('H', nfo.data, 0)[0]
             elif nfo.attr_fmt == EIATTR_PARAM_CBANK:
                 start, size = struct.unpack_from("HH", nfo.data, 4)  # skip word
@@ -517,7 +518,7 @@ class NVCubinPartELF(NVCubinPart):
             elif nfo.attr_fmt == EIATTR_EXPLICIT_CACHING:
                 out["EIATTR_EXPLICIT_CACHING"] = 1
             elif nfo.attr_fmt == EIATTR_MAXREG_COUNT:
-                out["EIATTR_MAXREG_COUNT"] = nfo.attr_size  # unused, SHI_REGISTERS is used instead
+                out["EIATTR_MAXREG_COUNT"] = struct.unpack('H', nfo.data)[0]  # unused, SHI_REGISTERS is used instead
             elif nfo.attr_fmt == EIATTR_FRAME_SIZE:
                 self._set_info_dict(nfo.data, self.frame_size)
             elif nfo.attr_fmt == EIATTR_MAX_STACK_SIZE:
