@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
     args = p.parse_args()
 
-    nvfatbin.DEBUG = 1
+    nvfatbin.DEBUG = args.debug
     nvfatbin.LIBRARY_MODE = 0
 
     cubin = nvfatbin.NVCubin.from_elf(args.cubinfile)

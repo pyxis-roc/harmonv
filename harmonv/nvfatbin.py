@@ -62,6 +62,7 @@ R_CUDA_ABS32_HI_20 = 44
 R_CUDA_ABS32_LO_20 = 43
 
 R_NV_64 = 2
+R_CUDA_64 = 2
 R_CUDA_FUNC_DESC_64 = 35
 
 # STO_CUDA
@@ -97,6 +98,10 @@ class NVCubinPart(object):
 
     def get_filename(self, stem_fn=None):
         # as shown by -lelf and -lptx
+
+        if self.header is None:
+            # standalone cubin file
+            return self.cubin.filename
 
         def prefix(i):
             p = i.rfind(b".")
@@ -607,8 +612,14 @@ class NVCubinPartELF(NVCubinPart):
             if section.name in self.relocations:
                 symbol = []
                 for r in self.relocations[section.name]:
-                    assert r[0]['r_info_type'] == R_CUDA_FUNC_DESC_64, r
-                    symbol.append(r[1])
+                    if r[0]['r_info_type'] == R_CUDA_FUNC_DESC_64:
+                        symbol.append(r[1])
+                    elif r[0]['r_info_type'] == R_CUDA_64:
+                        # places a 64-bit address in the constant section's data
+                        # currently not handled
+                        warnings.warn(f'{self.get_filename()}: Ignoring relocation {symbol} in {section.name} {r}')
+                    else:
+                        assert False, f"Unsupported relocation, {r}"
             else:
                 symbol = [''] # possibly global
 
@@ -665,7 +676,16 @@ class NVCubinPartELF(NVCubinPart):
 
         self.cubin_elf = ELFFile(io.BytesIO(data))
         # # see Nervana's maxas cubin file for more details on properties
-        self.elf_arch = self.cubin_elf.header["e_flags"] & 0xFF
+        if self.cubin_elf.header['e_machine'] != 'EM_CUDA':
+            raise ValueError(f"Not a CUDA cubin e_machine={self.cubin_elf.header['e_machine']}")
+
+        if self.cubin_elf.header['e_ident']['EI_ABIVERSION'] == 8:
+            self.elf_arch = (self.cubin_elf.header["e_flags"] & 0xFFFF) >> 8
+        else:
+            self.elf_arch = self.cubin_elf.header["e_flags"] & 0xFF
+
+        if self.arch is None and self.header is None:
+            self.arch = self.elf_arch
 
         if (not LIBRARY_MODE) and DEBUG_MODE:
             print(f"elf: arch={self.elf_arch}")
