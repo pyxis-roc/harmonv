@@ -42,6 +42,8 @@ if __name__ == "__main__":
         if isinstance(p, nvfatbin.NVCubinPartELF):
             p.parse()
             out.update(p.fn_info)
+            for fn in p.fn_info:
+                out[fn]['EIATTR_KPARAM_INFO'] = [x._asdict() for x in p.args[fn]]
 
     if args.output:
         with open(args.output, "w") as f:
