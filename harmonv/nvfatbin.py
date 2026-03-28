@@ -401,7 +401,7 @@ class NVCubinPartELF(NVCubinPart):
             elif attr_fmt == 0x2001:  # EIATTR_NEED_CNP_PATCH
                 ndx += attr_size
             elif attr_fmt == 0x401:  # EIATTR_CTAIDZ_USED
-                ndx += attr_size
+                pass
             elif attr_fmt == 0x2A01:  # EIATTR_SW1850030_WAR
                 ndx += attr_size
             elif attr_fmt == EIATTR_SW2393858_WAR:
@@ -421,7 +421,8 @@ class NVCubinPartELF(NVCubinPart):
             elif attr_fmt == EIATTR_INDIRECT_BRANCH_TARGETS:
                 ndx += attr_size
             elif attr_fmt == EIATTR_SW2861232_WAR:
-                ndx += attr_size
+                #ndx += attr_size
+                pass
             elif (
                 attr_fmt == EIATTR_BINDLESS_TEXTURE_BANK
             ):  # EIATTR_BINDLESS_TEXTURE_BANK
